@@ -1,0 +1,27 @@
+[
+  {
+    "id": "bench_software_platform",
+    "text": "US software platform pursuing cybersecurity and analytics add-ons",
+    "relevant_deal_ids": ["platform_tech_001", "addon_tech_001", "addon_tech_002"]
+  },
+  {
+    "id": "bench_healthcare_virtual_care",
+    "text": "Healthcare roll-up focused on telehealth expansion and revenue cycle management",
+    "relevant_deal_ids": ["platform_health_001", "addon_health_001", "canada_health_001"]
+  },
+  {
+    "id": "bench_industrial_supply_chain",
+    "text": "Industrial services platform acquiring supply-chain optimization capabilities",
+    "relevant_deal_ids": ["platform_ind_001", "addon_ind_002", "addon_ind_001"]
+  },
+  {
+    "id": "bench_fintech_europe",
+    "text": "European fintech platform offering digital banking and payments infrastructure",
+    "relevant_deal_ids": ["eu_platform_001"]
+  },
+  {
+    "id": "bench_retail_exit",
+    "text": "Retail technology platform with successful exit after point-of-sale expansion",
+    "relevant_deal_ids": ["realized_001"]
+  }
+]

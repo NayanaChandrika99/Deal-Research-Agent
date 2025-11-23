@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+wheels/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Project-specific
+# Data files (except examples)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Model artifacts
+models/*.pkl
+models/*.joblib
+models/*.json
+!models/.gitkeep
+
+# Optimized prompts (track in git, but ignore large files)
+prompts/**/*.json
+!prompts/**/v*.json
+
+# Evaluation results
+results/*.json
+results/*.csv
+!results/.gitkeep
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# DSPy cache
+.dspy_cache/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+.DS_Store
