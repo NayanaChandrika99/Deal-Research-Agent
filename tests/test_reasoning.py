@@ -175,6 +175,12 @@ class TestLLMClient:
 class TestReasoner:
     """Test deal reasoning functionality."""
     
+    def test_reasoner_error_alias(self):
+        """ReasoningError should be an alias for DealReasonerError."""
+        from dealgraph.reasoning.reasoner import DealReasonerError, ReasoningError
+
+        assert ReasoningError is DealReasonerError
+
     def test_format_deals_for_prompt(self):
         """Test formatting deals for prompt."""
         deals = [

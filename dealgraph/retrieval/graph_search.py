@@ -257,19 +257,25 @@ def get_search_explanation(candidate: CandidateDeal, query: str) -> Dict[str, An
     features = candidate.graph_features
     deal = candidate.deal
     
+    text_similarity = (
+        features['text_similarity']
+        if 'text_similarity' in features
+        else getattr(candidate, 'text_similarity', 0.0)
+    )
+    
     explanation = {
         'deal_id': deal.id,
         'deal_name': deal.name,
         'query': query,
-        'text_similarity': features.get('text_similarity', 0.0),
+        'text_similarity': text_similarity,
         'relevance_factors': []
     }
     
     # Text similarity explanation
-    if features.get('text_similarity', 0) > 0.7:
-        explanation['relevance_factors'].append(f"High text similarity ({features['text_similarity']:.3f})")
-    elif features.get('text_similarity', 0) > 0.5:
-        explanation['relevance_factors'].append(f"Moderate text similarity ({features['text_similarity']:.3f})")
+    if text_similarity > 0.7:
+        explanation['relevance_factors'].append(f"High text similarity ({text_similarity:.3f})")
+    elif text_similarity > 0.5:
+        explanation['relevance_factors'].append(f"Moderate text similarity ({text_similarity:.3f})")
     
     # Sector match
     if features.get('sector_match', 0):

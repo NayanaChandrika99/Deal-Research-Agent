@@ -21,6 +21,7 @@ class PromptMetadata:
     performance_metrics: Optional[Dict[str, Any]] = None
     changelog_entry: Optional[str] = None
     system_prompt: Optional[str] = None
+    module_path: Optional[str] = None
 
 
 class PromptRegistry:

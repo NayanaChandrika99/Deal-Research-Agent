@@ -24,7 +24,10 @@ from ..retrieval import (
     validate_search_parameters,
     get_feature_names
 )
-from ..data.schemas import Deal, Snippet, CandidateDeal, DealList
+from ..data.schemas import Deal, Snippet, CandidateDeal, DealList, RankedDeal
+from ..reasoning.reasoner import deal_reasoner, ReasoningError
+from ..ranking.features import candidate_to_features
+from ..ranking.model import DealRanker
 
 
 class SearchIndexManager:
@@ -246,16 +249,15 @@ class SearchIndexManager:
 
 # Global search index manager
 _search_manager = SearchIndexManager()
+_cached_ranker: Optional[DealRanker] = None
 
 
 def _ensure_search_components() -> Tuple[DealGraph, DealEmbeddingIndex, DealList, Dict[str, List[Snippet]], Any]:
     """Guarantee that search components are loaded and return them."""
-    try:
-        return _search_manager.get_components()
-    except RuntimeError:
+    if not _search_manager.is_ready():
         logging.info("Search index not ready, building...")
         build_search_index()
-        return _search_manager.get_components()
+    return _search_manager.get_components()
 
 
 def build_search_index(
@@ -374,6 +376,7 @@ def tool_graph_semantic_search(
                     "snippets": [
                         {
                             "id": snippet.id,
+                            "deal_id": snippet.deal_id,
                             "source": snippet.source,
                             "text": snippet.text
                         }
@@ -414,6 +417,7 @@ def tool_graph_semantic_search(
                 "snippets": [
                     {
                         "id": snippet.id,
+                        "deal_id": snippet.deal_id,
                         "source": snippet.source,
                         "text": snippet.text
                     }
@@ -542,8 +546,9 @@ def _extract_relevance_factors(candidate: Dict[str, Any]) -> List[str]:
 def _analyze_similarity(candidate: Dict[str, Any]) -> Dict[str, float]:
     """Analyze text similarity components."""
     features = candidate.get('graph_features', {})
+    text_similarity = candidate.get("text_similarity", features.get("text_similarity", 0.0))
     return {
-        "text_similarity": features.get('text_similarity', 0.0),
+        "text_similarity": text_similarity,
         "description_length": features.get('description_length', 0),
         "text_graph_alignment": features.get('text_graph_alignment', 0.0)
     }
@@ -583,12 +588,21 @@ def validate_search_setup() -> Dict[str, Any]:
     Returns:
         Dictionary with validation status and component information
     """
+    if not _search_manager.is_ready():
+        return {
+            "ready": False,
+            "error": "Search index not built",
+            "components": {},
+            "search_capabilities": {}
+        }
     try:
         graph, index, deals, snippets_by_deal, _ = _ensure_search_components()
+        graph_obj = getattr(graph, "graph", None)
+        graph_nodes = graph_obj.number_of_nodes() if graph_obj else 0
         return {
             "ready": True,
             "components": {
-                "graph": graph.graph.number_of_nodes(),
+                "graph": graph_nodes,
                 "index": index.size(),
                 "deals": len(deals),
                 "snippets": sum(len(s) for s in snippets_by_deal.values())
@@ -608,3 +622,112 @@ def validate_search_setup() -> Dict[str, Any]:
             "components": {},
             "search_capabilities": {}
         }
+
+
+def tool_rank_deals(
+    query: str,
+    candidates: List[Dict[str, Any]],
+    top_k: Optional[int] = None
+) -> List[RankedDeal]:
+    """
+    Convert candidate dicts from search into RankedDeal objects sorted by relevance.
+    """
+    if not candidates:
+        return []
+
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda c: c.get("relevance_score", c.get("text_similarity", 0.0)),
+        reverse=True
+    )
+
+    ranked_deals: List[RankedDeal] = []
+    for idx, candidate_dict in enumerate(sorted_candidates, start=1):
+        candidate = _dict_to_candidate(candidate_dict)
+        score = candidate_dict.get("relevance_score", candidate.text_similarity)
+        ranked_deals.append(RankedDeal(candidate=candidate, score=score, rank=idx))
+        if top_k and len(ranked_deals) >= top_k:
+            break
+    return ranked_deals
+
+
+def tool_rank_deals_ml(
+    query: str,
+    candidates: List[Dict[str, Any]],
+    model_path: Optional[str] = None,
+    top_k: Optional[int] = None
+) -> List[RankedDeal]:
+    """
+    Rank candidates using the ML ranker. Falls back to heuristic ranking on failure.
+    """
+    try:
+        ranker = _load_ranker(model_path)
+        candidate_objs = [_dict_to_candidate(candidate) for candidate in candidates]
+        ranked = ranker.rank(candidate_objs)
+        if top_k:
+            ranked = ranked[:top_k]
+        return ranked
+    except Exception as exc:
+        logging.warning("ML ranker failed (%s). Falling back to heuristic ranking.", exc)
+        return tool_rank_deals(query, candidates, top_k=top_k)
+
+
+def tool_deal_reasoner(
+    query: str,
+    ranked_deals: List[RankedDeal],
+    max_deals: int = 10,
+    prompt_version: str = "latest"
+):
+    """
+    Thin wrapper around deal_reasoner for agent use.
+    """
+    try:
+        return deal_reasoner(
+            query=query,
+            ranked_deals=ranked_deals,
+            max_deals=max_deals,
+            prompt_version=prompt_version
+        )
+    except ReasoningError:
+        raise
+
+
+def _dict_to_candidate(candidate_dict: Dict[str, Any]) -> CandidateDeal:
+    """Convert a tool_graph_semantic_search result dict into a CandidateDeal."""
+    snippets = [
+        Snippet(**snippet) if not isinstance(snippet, Snippet) else snippet
+        for snippet in candidate_dict.get("snippets", [])
+    ]
+
+    deal = Deal(
+        id=candidate_dict["deal_id"],
+        name=candidate_dict["deal_name"],
+        sector_id=candidate_dict["sector_id"],
+        region_id=candidate_dict["region_id"],
+        is_platform=candidate_dict["is_platform"],
+        status=candidate_dict["status"],
+        description=candidate_dict["description"],
+    )
+
+    return CandidateDeal(
+        deal=deal,
+        snippets=snippets,
+        text_similarity=float(candidate_dict.get("text_similarity", 0.0)),
+        graph_features=candidate_dict.get("graph_features", {}),
+    )
+
+
+def _load_ranker(model_path: Optional[str] = None) -> DealRanker:
+    global _cached_ranker
+    target_path = Path(model_path or (Path(__file__).parent.parent.parent / "models" / "deal_ranker_v1.pkl"))
+    if _cached_ranker is None:
+        if not target_path.exists():
+            raise FileNotFoundError(f"Ranker model not found: {target_path}")
+        _cached_ranker = DealRanker.load(target_path)
+    return _cached_ranker
+
+
+def reset_cached_ranker():
+    """Reset cached ranker (for tests)."""
+    global _cached_ranker
+    _cached_ranker = None

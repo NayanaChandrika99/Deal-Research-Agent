@@ -23,6 +23,16 @@ Complete implementation of DealGraph Agent system from foundation to production 
 - DSPy MIPROv2 prompt optimization
 - Performance testing and validation framework
 
+### Phase 4: Ranking ✅ COMPLETED
+- Synthetic reverse-query data generation with deterministic fallbacks and CLI entry point.
+- Gradient Boosting ranker trained on graph/text features with joblib persistence and training script.
+- Agent tool integration plus benchmarking CLI contrasting ML ranker vs heuristic pipeline.
+
+### Phase 5: Polish ✅ COMPLETED
+- Agent orchestrator coordinating retrieval → ML ranking → reasoning with structured logging.
+- Typer-based CLI (`dealgraph-agent`) that prints narratives, exports JSON, and exposes prompt/max result controls.
+- Documentation (README, PHASES, CHANGES) and full pytest suite updated so contributors can install, test, and run the system confidently.
+
 ## Recent ExecPlan Completion
 
 ### ExecPlan 2.1 - Embeddings Index ✅ COMPLETED (2024-11-23)
@@ -208,6 +218,117 @@ Complete implementation of DealGraph Agent system from foundation to production 
 - Comprehensive test coverage across all components
 
 **Next Steps**: Ready for ExecPlan 4.0 - Production Deployment & Monitoring
+
+### ExecPlan 4.1 - Reverse-Query Data Generator ✅ COMPLETED (2025-11-23)
+**Implement LLM-assisted synthetic training data pipeline for ranking**
+
+**Completed Components:**
+- ✅ **Data Generator**: `dealgraph/ranking/data_gen.py` samples graph neighborhoods, crafts prompts for the reverse-query LLM, and synthesizes labeled positives/negatives with deterministic fallbacks when no model is available.
+- ✅ **Persistence Layer**: Saved artifacts under `data/processed/ranking_training_data.json` with metadata (clusters, prompt version, timestamp) so future training runs are reproducible.
+- ✅ **CLI Workflow**: `python -m dealgraph.ranking.data_gen --clusters ...` entry point supporting dry-run mode, resume behavior, and output path overrides.
+- ✅ **Test Suite**: `tests/test_ranking_data_gen.py` validates stubbed LLM flows, CLI argument parsing, and schema of generated examples.
+
+**Key Features:**
+- Cluster-aware sampling to keep examples diverse across sectors/regions.
+- Prompt templates tailored to candidate deals that reference snippets for richer labels.
+- Deterministic `RandomState` seed injection for consistent fixtures and CI runs.
+- Protective guardrails (lowercased IDs, JSON validation) ensuring training data remains clean.
+
+**Files Created:**
+- `dealgraph/ranking/data_gen.py`
+- `tests/test_ranking_data_gen.py`
+- `data/processed/ranking_training_data.json`
+
+### ExecPlan 4.2 - Ranking Model ✅ COMPLETED (2025-11-23)
+**Train and persist a Gradient Boosting ranker using graph/text features**
+
+**Completed Components:**
+- ✅ **Feature Extraction**: `dealgraph/ranking/features.py` defines `FEATURE_NAMES`, `candidate_to_features()`, vector normalization, and guards against missing graph fields.
+- ✅ **Model Class**: `dealgraph/ranking/model.py` wraps `GradientBoostingRegressor` via a `DealRanker` façade exposing `fit`, `predict_scores`, `rank_candidates`, `save`, and `load`.
+- ✅ **Training Script**: `dealgraph/ranking/train.py` reloads the synthetic dataset, recomputes features, trains/validates the model, logs ROC-AUC/MAE metrics, and saves artifacts under `models/deal_ranker_v1.pkl`.
+- ✅ **Test Coverage**: `tests/test_ranking_features.py`, `tests/test_ranking_model.py`, and `tests/test_ranking_train.py` cover feature math, serialization, and CLI entry points.
+
+**Key Features:**
+- Handles heterogeneous feature scales with explicit ordering and numpy arrays to prevent mismatch when loading older models.
+- Validation split fallback keeps the CLI resilient even when the dataset is tiny (e.g., CI dry runs).
+- Joblib persistence plus metadata (feature version, timestamp) ensures compatibility as features evolve.
+
+**Files Created:**
+- `dealgraph/ranking/features.py`
+- `dealgraph/ranking/model.py`
+- `dealgraph/ranking/train.py`
+- `models/deal_ranker_v1.pkl`
+
+### ExecPlan 4.3 - Ranking Integration & Evaluation ✅ COMPLETED (2025-11-23)
+**Wire ML ranker into the agent and build comparison tooling**
+
+**Completed Components:**
+- ✅ **Agent Tooling**: `dealgraph/agent/tools.py` lazily loads the trained model, exposes `tool_rank_deals_ml()`, and falls back to heuristic ranking if the model file is missing.
+- ✅ **Evaluation CLI**: `dealgraph/eval/compare_ranking.py` benchmarks ML vs. heuristic ranking (Recall/NDCG at K) and persist results to JSON for regressions.
+- ✅ **Integration Tests**: `tests/test_rank_integration.py` verifies agent-level wiring and CLI output, ensuring the ML ranker affects ordering deterministically in CI.
+
+**Key Features:**
+- Deterministic `SearchIndexManager` caching avoids recomputing embeddings when invoking the comparer.
+- Benchmark script accepts `--model` and `--output` flags mirroring README quick start steps.
+- Unit/integration tests rely on synthetic fixtures to avoid heavyweight data dependencies.
+
+**Files Created:**
+- `dealgraph/ranking/__init__.py` (public API), updates to `dealgraph/agent/tools.py`
+- `dealgraph/eval/compare_ranking.py`
+- `tests/test_rank_integration.py`
+
+### ExecPlan 5.1 - Agent Orchestrator ✅ COMPLETED (2025-11-23)
+**Create a single entry point that chains retrieval, ranking, and reasoning**
+
+**Completed Components:**
+- ✅ **`run_agent()` Flow**: In `dealgraph/agent/orchestrator.py`, orchestrates graph search → ML ranking → reasoner invocation, captures intermediate artifacts, and surfaces them via `AgentLog`.
+- ✅ **Logging & Diagnostics**: Built-in timing, structured logging, and prompt-version overrides with graceful fallbacks when ranking models or prompts are missing.
+- ✅ **Tests**: `tests/test_agent_orchestrator.py` uses deterministic stubs to assert ordering, logging payloads, and error propagation.
+
+**Key Features:**
+- Accepts knobs for prompt version, maximum deals, and ranking strategy so both CLI and notebooks can reuse identical orchestration.
+- Provides helper `build_agent_context()` to share dataset loading between CLI/tests.
+
+**Files Created:**
+- `dealgraph/agent/orchestrator.py`
+- `tests/test_agent_orchestrator.py`
+
+### ExecPlan 5.2 - CLI Interface ✅ COMPLETED (2025-11-23)
+**Expose the agent through a Typer-powered CLI**
+
+**Completed Components:**
+- ✅ **Typer App**: `dealgraph/cli/main.py` registers the root command `dealgraph-agent` with options for prompt version, max results, JSON output path, verbose logging, and dry-run fallback.
+- ✅ **Packaging**: `pyproject.toml` console script entry plus README instructions and examples.
+- ✅ **Tests**: `tests/test_cli.py` mocks `run_agent()` to verify stdout formatting, JSON persistence, and error handling without touching network calls.
+
+**Key Features:**
+- Rich formatting for console output (structured JSON + narrative) to speed analyst review.
+- Optionally persists the full `AgentLog` to disk for introspection.
+- CLI respects environment variables (`.env` file) and surfaces actionable errors when configuration is missing.
+
+**Files Created:**
+- `dealgraph/cli/main.py`
+- `tests/test_cli.py`
+- README usage snippets, `pyproject.toml` entry point
+
+### ExecPlan 5.3 - Documentation & Testing ✅ COMPLETED (2025-11-23)
+**Finalize docs and ensure an entirely green, warning-free test suite**
+
+**Completed Components:**
+- ✅ **Test Hardenings**: `tests/test_graph_search.py` now uses a reusable `build_mock_deal_graph()` helper so mocks expose `.graph`; `dealgraph/retrieval/graph_search.get_search_explanation()` falls back to the candidate's `text_similarity`; `dealgraph/performance/test_cases.py` always produces cases (even for tiny suites) and marks its classes `__test__ = False`; `dealgraph/performance/metrics.py` short-circuits t-tests when differences have near-zero variance.
+- ✅ **Noise-Free Pytest**: `pyproject.toml` filters the external `PydanticDeprecatedSince20` warning from litellm to keep CI logs pristine.
+- ✅ **Documentation Refresh**: README quick start already covered CLI/ranking; we refreshed PHASES.md and this CHANGES_SUMMARY.md, marking Phase 5 complete and recording the new workflow/test guarantees.
+- ✅ **Validation**: `PYTHONPATH=. .venv/bin/pytest` passes 236 tests with zero warnings, providing the acceptance artifact for this phase.
+
+**Key Features:**
+- Synthetic benchmark generator now supports very small suites, preventing `ZeroDivisionError` in automation.
+- Statistical analysis utilities remain informative even when optimized/baseline scores match, avoiding SciPy precision warnings.
+- Contributors have a single test command plus documentation references needed to rerun everything locally.
+
+**Files Touched:**
+- `tests/test_graph_search.py`, `dealgraph/retrieval/graph_search.py`
+- `dealgraph/performance/test_cases.py`, `dealgraph/performance/metrics.py`
+- `pyproject.toml`, `README.md`, `PHASES.md`, `CHANGES_SUMMARY.md`
 
 ## Files Modified
 
@@ -407,4 +528,3 @@ dspy-ai>=2.5
 - **Monitoring Enabled**: Real-time monitoring and regression detection in place
 - **Scalable Architecture**: Modular design supports easy expansion and maintenance
 - **Quality Assured**: Comprehensive test coverage across all system components
-

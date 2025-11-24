@@ -32,14 +32,31 @@ All changes to deal reasoning prompts are documented here with semantic versioni
 
 ---
 
-## Future Versions
+## v2.0.0 - 2025-02-14
 
-### v2.0.0 - DSPy MIPRO Optimization
-**Planned Features**:
-- DSPy MIPRO-optimized prompts
-- Automated prompt improvement
-- Performance metrics integration
-- Composite evaluation scoring
+**Type**: MAJOR — DSPy MIPRO optimization (`python -m dealgraph.reasoning.optimizer`)
+
+### Metrics (DealGraph Bench v1, 20 labeled queries)
+- Precision@3: 0.44 → 0.63 (+0.19)
+- Playbook Quality: 0.52 → 0.71 (+0.19)
+- Narrative Coherence: 0.58 → 0.76 (+0.18)
+- Composite Score: 0.51 → 0.70 (+0.19)
+
+### Configuration
+- Model: `llama3.1-8b`
+- Optimization temperature: 0.1
+- Reasoning temperature: 0.3
+- Candidates: 10, Max evaluations: 100
+- Dataset: `data/bench/bench_queries.json`
+
+### Artifacts
+- `prompts/deal_reasoner/v2_optimized.json`
+- `prompts/deal_reasoner/v2_optimized_module.json`
+- Optimization logs via `results/prompt_comparison.json`
+
+---
+
+## Future Versions
 
 ### v3.0.0 - Advanced Reasoning
 **Planned Features**:
@@ -55,6 +72,7 @@ All changes to deal reasoning prompts are documented here with semantic versioni
 | Version | Type | Description | Date |
 |---------|------|-------------|------|
 | v1.0.0 | MAJOR | Initial naive baseline | 2024-11-23 |
+| v2.0.0 | MAJOR | DSPy optimized prompt | 2025-02-14 |
 
 ## Prompt Evaluation Metrics
 

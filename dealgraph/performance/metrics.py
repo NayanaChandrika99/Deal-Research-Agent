@@ -73,11 +73,6 @@ class PerformanceMetrics:
             metrics["composite_score"] = self._calculate_composite_score(metrics)
             
             # Additional metrics
-            metrics["precedent_count"] = len(reasoning_output.get("precedents", []))
-            metrics["playbook_lever_count"] = len(reasoning_output.get("playbook_levers", []))
-            metrics["risk_theme_count"] = len(reasoning_output.get("risk_themes", []))
-            metrics["narrative_length"] = len(reasoning_output.get("narrative_summary", ""))
-            
             return metrics
             
         except Exception as e:
@@ -376,8 +371,14 @@ class StatisticalAnalysis:
             # Calculate differences
             differences = [opt - base for opt, base in zip(optimized_values, baseline_values)]
             
-            # Perform paired t-test
-            statistic, p_value = stats.ttest_rel(optimized_values, baseline_values)
+            diff_std = float(np.std(differences))
+            
+            # Short-circuit when arrays or their differences are effectively identical
+            if np.allclose(optimized_values, baseline_values, rtol=1e-9, atol=1e-9) or diff_std < 1e-9:
+                statistic, p_value = 0.0, 1.0
+            else:
+                # Perform paired t-test
+                statistic, p_value = stats.ttest_rel(optimized_values, baseline_values)
             
             # Determine significance
             alpha = 1 - confidence_level

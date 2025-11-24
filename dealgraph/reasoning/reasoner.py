@@ -4,14 +4,22 @@
 from typing import List, Dict, Any, Optional, Tuple
 import json
 import logging
+from pathlib import Path
 from ..data.schemas import RankedDeal, DealReasoningOutput, Precedent, CandidateDeal
+from ..config.settings import settings
 from .prompts import load_prompt, DEAL_REASONER_NAIVE_PROMPT
 from .llm_client import get_llm_client, LLMClientError
+from .dspy_modules import DealReasonerModule
+from .dspy import get_dspy_optimizer
 
 
-class ReasoningError(Exception):
+class DealReasonerError(Exception):
     """Raised when reasoning operations fail."""
     pass
+
+
+# Backwards compatibility with earlier name used in tests/imports.
+ReasoningError = DealReasonerError
 
 
 def deal_reasoner(
@@ -47,7 +55,17 @@ def deal_reasoner(
         # Format deals for prompt
         deals_block = _format_deals_for_prompt(top_deals)
         
-        system_prompt, user_prompt = _resolve_prompts(prompt_version, query, deals_block)
+        system_prompt, user_prompt, prompt_metadata = _resolve_prompts(
+            prompt_version, query, deals_block
+        )
+
+        dspy_module = _load_dspy_module(prompt_metadata)
+        if dspy_module:
+            try:
+                prediction = dspy_module(query=query, candidate_deals=deals_block)
+                return _parse_dspy_output(prediction)
+            except Exception as exc:
+                logging.warning("DSPy module execution failed: %s", exc)
         
         # Call LLM
         response = llm_client.complete_json(
@@ -68,9 +86,9 @@ def deal_reasoner(
         return reasoning_output
         
     except LLMClientError as e:
-        raise ReasoningError(f"LLM reasoning failed: {e}")
+        raise DealReasonerError(f"LLM reasoning failed: {e}")
     except Exception as e:
-        raise ReasoningError(f"Unexpected reasoning error: {e}")
+        raise DealReasonerError(f"Unexpected reasoning error: {e}")
 
 
 def analyze_deals_with_naive_prompt(
@@ -92,9 +110,12 @@ def analyze_deals_with_naive_prompt(
     return deal_reasoner(query, ranked_deals, max_deals, prompt_version="v1")
 
 
-def _resolve_prompts(prompt_version: str, query: str, deals_block: str) -> Tuple[str, str]:
+def _resolve_prompts(
+    prompt_version: str, query: str, deals_block: str
+) -> Tuple[str, str, Optional[Any]]:
     """Resolve the system and user prompts for the requested version."""
     version_arg: Optional[str] = None
+    metadata = None
     if prompt_version == "v1":
         system_prompt = _get_deal_reasoner_system_prompt()
         template = DEAL_REASONER_NAIVE_PROMPT
@@ -113,7 +134,7 @@ def _resolve_prompts(prompt_version: str, query: str, deals_block: str) -> Tuple
             system_prompt = getattr(metadata, "system_prompt", metadata.description)
             template = prompt_data["content"]
     
-    return system_prompt, _format_prompt_template(template, query, deals_block)
+    return system_prompt, _format_prompt_template(template, query, deals_block), metadata
 
 
 def _format_deals_for_prompt(deals: List[RankedDeal]) -> str:
@@ -168,6 +189,24 @@ Focus on patterns, strategies, and lessons that would be relevant for evaluating
 def _format_prompt_template(template: str, query: str, deals_block: str) -> str:
     """Safely substitute the query and deals block into a prompt template."""
     return template.replace("{query}", query).replace("{deals_block}", deals_block)
+
+
+def _load_dspy_module(metadata: Optional[Any]) -> Optional[DealReasonerModule]:
+    """Load a serialized DSPy module if metadata provides a path."""
+    if not metadata or not getattr(metadata, "module_path", None):
+        return None
+    module_path = Path(metadata.module_path)
+    if not module_path.is_absolute():
+        module_path = (settings.PROJECT_ROOT / module_path).resolve()
+    if not module_path.exists():
+        return None
+    try:
+        module = DealReasonerModule()
+        module.load(str(module_path))
+        return module
+    except Exception as exc:
+        logging.warning("Failed to load DSPy module at %s: %s", module_path, exc)
+        return None
 
 
 def _parse_reasoning_output(
@@ -234,6 +273,26 @@ def _parse_reasoning_output(
         logging.error(f"Failed to parse reasoning output: {e}")
         logging.error(f"Response data: {response}")
         raise ReasoningError(f"Invalid reasoning output format: {e}")
+
+
+def _parse_dspy_output(result: Any) -> DealReasoningOutput:
+    """Convert a DSPy prediction into DealReasoningOutput."""
+    response = {
+        "precedents": _ensure_json_sequence(getattr(result, "precedents", [])),
+        "playbook_levers": _ensure_json_sequence(getattr(result, "playbook_levers", [])),
+        "risk_themes": _ensure_json_sequence(getattr(result, "risk_themes", [])),
+        "narrative_summary": getattr(result, "narrative_summary", ""),
+    }
+    return _parse_reasoning_output(response, [])
+
+
+def _ensure_json_sequence(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
 
 
 def _iter_candidates(deals: List[RankedDeal]) -> List[CandidateDeal]:
@@ -314,8 +373,6 @@ def dspy_optimize_prompt(
         ReasoningError: If optimization fails
     """
     try:
-        from .dspy import get_dspy_optimizer
-        
         optimizer = get_dspy_optimizer()
         optimization_result = optimizer.optimize_deal_reasoner_prompt(
             baseline_prompt_version=baseline_version,
@@ -356,8 +413,6 @@ def dspy_evaluate_performance(
         Dictionary with performance metrics (0.0 to 1.0)
     """
     try:
-        from .dspy import get_dspy_optimizer
-        
         optimizer = get_dspy_optimizer()
         return optimizer.evaluator.evaluate_reasoning_output(reasoning_output, reference_data)
         
@@ -383,8 +438,6 @@ def compare_reasoning_prompts(
         Dictionary with comparison results
     """
     try:
-        from .dspy import get_dspy_optimizer
-        
         optimizer = get_dspy_optimizer()
         results = {}
         
@@ -422,7 +475,6 @@ def compare_reasoning_prompts(
 def dspy_get_optimization_history() -> List[Dict[str, Any]]:
     """Get history of DSPy optimization attempts."""
     try:
-        from .dspy import get_dspy_optimizer
         optimizer = get_dspy_optimizer()
         return optimizer.get_optimization_history()
     except Exception as e:
@@ -433,7 +485,6 @@ def dspy_get_optimization_history() -> List[Dict[str, Any]]:
 def dspy_rollback_to_baseline(baseline_version: str = "v1") -> bool:
     """Rollback to baseline prompt if optimization failed."""
     try:
-        from .dspy import get_dspy_optimizer
         optimizer = get_dspy_optimizer()
         return optimizer.rollback_to_baseline(baseline_version)
     except Exception as e:

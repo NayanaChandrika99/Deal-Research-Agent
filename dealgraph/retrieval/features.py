@@ -97,11 +97,12 @@ def compute_graph_features(
         features['region_degree'] = len(region_deals) - 1  # Exclude self
     
     # Compute directional degrees using NetworkX
-    if hasattr(deal_graph, 'graph'):
+    graph_obj = getattr(deal_graph, "graph", None)
+    if graph_obj is not None:
         node_id = deal.id
-        if deal_graph.graph.has_node(node_id):
-            features['out_degree'] = deal_graph.graph.out_degree(node_id)
-            features['in_degree'] = deal_graph.graph.in_degree(node_id)
+        if graph_obj.has_node(node_id):
+            features['out_degree'] = graph_obj.out_degree(node_id)
+            features['in_degree'] = graph_obj.in_degree(node_id)
     
     return features
 

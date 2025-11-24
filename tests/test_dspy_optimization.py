@@ -2,7 +2,8 @@
 
 import pytest
 import json
-from unittest.mock import Mock, patch, MagicMock
+import logging
+from unittest.mock import Mock, patch, MagicMock, mock_open
 from pathlib import Path
 import tempfile
 
@@ -250,10 +251,11 @@ class TestDSPyOptimizer:
         # Verify DSPy was configured
         mock_dspy.configure.assert_called_once()
     
+    @patch('dealgraph.reasoning.dspy.optimizer.MIPROv2')
     @patch('dealgraph.reasoning.dspy.optimizer.dspy')
     @patch('dealgraph.reasoning.dspy.optimizer.settings')
     @patch('dealgraph.reasoning.dspy.optimizer.load_prompt')
-    def test_optimize_prompt_mock(self, mock_load_prompt, mock_settings, mock_dspy):
+    def test_optimize_prompt_mock(self, mock_load_prompt, mock_settings, mock_dspy, mock_miprov2):
         """Test prompt optimization with mocked DSPy."""
         mock_settings.DSPY_MODEL = "test-model"
         mock_settings.CEREBRAS_API_KEY = "test-key"
@@ -275,7 +277,7 @@ class TestDSPyOptimizer:
         # Mock teleprompter
         mock_teleprompter = Mock()
         mock_teleprompter.compile.return_value = mock_optimized_program
-        mock_dspy.teleprompter.MIPRO.return_value = mock_teleprompter
+        mock_miprov2.return_value = mock_teleprompter
         
         optimizer = DSPyOptimizer()
         
@@ -305,12 +307,10 @@ class TestDSPyOptimizer:
         retrieved_optimizer = get_dspy_optimizer()
         assert retrieved_optimizer == mock_optimizer
     
-    @patch('dealgraph.reasoning.dspy.optimizer.DSPyOptimizer')
-    @patch('dealgraph.reasoning.dspy.optimizer.load_prompt')
-    def test_save_optimized_prompt(self, mock_load_prompt, mock_optimizer_class):
+    def test_save_optimized_prompt(self):
         """Test saving optimized prompt."""
-        mock_optimizer_instance = Mock()
-        mock_optimizer_class.return_value = mock_optimizer_instance
+        optimizer = DSPyOptimizer.__new__(DSPyOptimizer)
+        optimizer.logger = logging.getLogger(__name__)
         
         optimization_result = {
             "optimized_version": "v2",
@@ -324,20 +324,19 @@ class TestDSPyOptimizer:
             "meets_threshold": True
         }
         
-        # Mock path creation
+        # Mock path creation and write
         with patch('dealgraph.reasoning.dspy.optimizer.Path') as mock_path:
             mock_path.return_value.mkdir.return_value = None
-            mock_path.return_value.__truediv__.return_value = mock_path.return_value
+            mock_path.return_value.with_name.return_value = mock_path.return_value
+            mock_path.return_value.write_text.return_value = None
             
-            # Mock file writing
-            with patch('builtins.open', mock_open()) as mock_file:
-                saved_path = mock_optimizer_instance.save_optimized_prompt(
-                    optimization_result, "test/prompt.txt"
-                )
-                
-                # Verify file was written
-                mock_file.assert_called_once()
-                assert "test/prompt.txt" in str(mock_file.return_value)
+            saved_path = DSPyOptimizer.save_optimized_prompt(
+                optimizer,
+                optimization_result, "test/prompt.json"
+            )
+            
+            mock_path.return_value.write_text.assert_called_once()
+            assert saved_path == str(mock_path.return_value)
 
 
 class TestDSPyIntegration:

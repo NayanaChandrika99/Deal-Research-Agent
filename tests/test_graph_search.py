@@ -1,5 +1,6 @@
 """Unit tests for graph search functionality."""
 
+import copy
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch
@@ -16,6 +17,30 @@ from dealgraph.retrieval.graph_search import (
 from dealgraph.data.schemas import Deal, Snippet, CandidateDeal
 from dealgraph.embeddings import EmbeddingEncoder, DealEmbeddingIndex
 from dealgraph.data.graph_builder import DealGraph
+
+
+DEFAULT_NEIGHBORS = {
+    'sectors': [{'id': 'tech'}],
+    'regions': [{'id': 'us'}],
+    'events': [],
+    'snippets': [],
+    'related_deals': [],
+    'addons': [],
+    'platforms': []
+}
+
+
+def build_mock_deal_graph(neighbors=None):
+    """Create a DealGraph mock with a NetworkX graph attribute."""
+    deal_graph = Mock(spec=DealGraph)
+    neighbor_snapshot = copy.deepcopy(neighbors or DEFAULT_NEIGHBORS)
+    deal_graph.get_deal_neighbors.return_value = neighbor_snapshot
+    graph = Mock()
+    graph.has_node.return_value = True
+    graph.out_degree.return_value = 2
+    graph.in_degree.return_value = 1
+    deal_graph.graph = graph
+    return deal_graph
 
 
 class TestGraphSemanticSearch:
@@ -36,19 +61,7 @@ class TestGraphSemanticSearch:
         ]
         
         # Mock deal graph
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         # Test data
         deals = [
@@ -104,19 +117,7 @@ class TestGraphSemanticSearch:
             ('deal_003', 0.7)   # industrial
         ]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="Tech Corp", sector_id="tech", region_id="us",
@@ -158,19 +159,7 @@ class TestGraphSemanticSearch:
             ('deal_003', 0.7)   # platform
         ]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="Platform Corp", sector_id="tech", region_id="us",
@@ -211,19 +200,7 @@ class TestGraphSemanticSearch:
             ('deal_004', 0.4)    # Below threshold
         ]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="High Similarity", sector_id="tech", region_id="us",
@@ -291,19 +268,7 @@ class TestGraphSemanticSearch:
             ('deal_002', 0.8)
         ]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         # Deals don't match the search results
         deals = [
@@ -449,19 +414,7 @@ class TestBatchSearch:
             []  # Query 3 results (no matches)
         ]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="Tech Corp", sector_id="tech", region_id="us",
@@ -510,19 +463,7 @@ class TestBatchSearch:
         deal_index = Mock(spec=DealEmbeddingIndex)
         deal_index.search.return_value = [('deal_001', 0.9)]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="Tech Corp", sector_id="tech", region_id="us",
@@ -596,19 +537,7 @@ class TestSearchExplanations:
         deal_index = Mock(spec=DealEmbeddingIndex)
         deal_index.search.return_value = [('deal_001', 0.9)]
         
-        deal_graph = Mock(spec=DealGraph)
-        deal_graph.get_deal_neighbors.return_value = {
-            'sectors': [{'id': 'tech'}],
-            'regions': [{'id': 'us'}],
-            'events': [],
-            'snippets': [],
-            'related_deals': [],
-            'addons': [],
-            'platforms': []
-        }
-        deal_graph.graph.has_node.return_value = True
-        deal_graph.graph.out_degree.return_value = 2
-        deal_graph.graph.in_degree.return_value = 1
+        deal_graph = build_mock_deal_graph()
         
         deals = [
             Deal(id="deal_001", name="Tech Corp", sector_id="tech", region_id="us",

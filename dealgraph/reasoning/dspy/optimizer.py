@@ -4,7 +4,7 @@
 import os
 import logging
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Callable, Dict, Any, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
 
@@ -15,8 +15,54 @@ from .config import DSPyConfig
 from .evaluator import PerformanceEvaluator
 from ..dspy_modules import DealReasonerModule
 from ..prompts import load_prompt
-from ..eval.bench_dataset import load_dealgraph_bench
+from ...eval.bench_dataset import load_dealgraph_bench
 from ...config.settings import settings
+
+
+class DealReasonerMetric:
+    """Composite metric that mirrors SPEC weights for DSPy optimization."""
+
+    def __init__(self, evaluator: Optional[PerformanceEvaluator] = None):
+        self.evaluator = evaluator or PerformanceEvaluator()
+
+    def __call__(self, example, prediction) -> float:
+        try:
+            reasoning_output = _prediction_to_reasoning_dict(prediction)
+            expected_ids = getattr(example, "expected_relevant_ids", [])
+            reference = {
+                "precedents": [
+                    {"deal_id": deal_id, "name": deal_id, "similarity_reason": ""}
+                    for deal_id in expected_ids
+                ]
+            }
+            metrics = self.evaluator.evaluate_reasoning_output(
+                reasoning_output,
+                reference,
+            )
+            return metrics.get("composite_score") or metrics.get("precision_at_3", 0.0)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "DealReasonerMetric evaluation failed: %s", exc
+            )
+            return 0.0
+
+
+def _prediction_to_reasoning_dict(prediction: Any) -> Dict[str, Any]:
+    """Convert a dspy.Prediction into the evaluator-friendly structure."""
+    def _ensure_json(value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    return {
+        "precedents": _ensure_json(getattr(prediction, "precedents", [])),
+        "playbook_levers": _ensure_json(getattr(prediction, "playbook_levers", [])),
+        "risk_themes": _ensure_json(getattr(prediction, "risk_themes", [])),
+        "narrative_summary": getattr(prediction, "narrative_summary", ""),
+    }
 
 
 class DSPyOptimizer:
@@ -29,7 +75,8 @@ class DSPyOptimizer:
     def __init__(
         self,
         config: Optional[DSPyConfig] = None,
-        evaluator: Optional[PerformanceEvaluator] = None
+        evaluator: Optional[PerformanceEvaluator] = None,
+        metric: Optional[Callable] = None,
     ):
         """
         Initialize DSPy optimizer.
@@ -40,6 +87,7 @@ class DSPyOptimizer:
         """
         self.config = config or DSPyConfig()
         self.evaluator = evaluator or PerformanceEvaluator()
+        self.metric = metric or DealReasonerMetric(self.evaluator)
         self.logger = logging.getLogger(__name__)
         
         # DSPy setup
@@ -101,17 +149,19 @@ class DSPyOptimizer:
             # Run MIPROv2 optimization
             self.logger.info("Running MIPROv2 optimization...")
             teleprompter = MIPROv2(
-                metric=self._evaluation_metric,
+                metric=self.metric,
                 num_candidate_prompts=num_candidate_prompts,
                 max_evaluations=max_evaluations,
                 verbose=False
             )
             
             # Optimize with MIPRO
+            trainset = self._get_training_dataset()
+            valset = self._get_validation_dataset()
             optimized_program = teleprompter.compile(
                 deal_reasoner_module,
-                trainset=self._get_training_dataset(),
-                valset=self._get_validation_dataset()
+                trainset=trainset,
+                valset=valset
             )
             
             # Extract optimized prompts
@@ -119,12 +169,9 @@ class DSPyOptimizer:
             user_prompt = optimized_program.get("user_prompt", "")
             
             # Evaluate performance improvement
-            improvement = self._evaluate_improvement(
-                baseline_system_prompt,
-                baseline_user_prompt,
-                system_prompt,
-                user_prompt
-            )
+            baseline_score = self._evaluate_module(deal_reasoner_module, valset or trainset)
+            optimized_score = self._evaluate_module(optimized_program, valset or trainset)
+            improvement = optimized_score - baseline_score
             
             # Store results
             optimization_result = {
@@ -137,6 +184,11 @@ class DSPyOptimizer:
                 "candidate_prompts_evaluated": num_candidate_prompts,
                 "total_evaluations": max_evaluations,
                 "min_improvement_threshold": min_improvement,
+                "performance_metrics": {
+                    "baseline_score": baseline_score,
+                    "optimized_score": optimized_score
+                },
+                "optimized_program": optimized_program,
                 "meets_threshold": improvement >= min_improvement
             }
             
@@ -205,25 +257,26 @@ class DSPyOptimizer:
         mid = max(1, len(training) // 2)
         return training[:mid]
     
-    def _evaluate_improvement(
+    def _evaluate_module(
         self,
-        baseline_system: str,
-        baseline_user: str,
-        optimized_system: str,
-        optimized_user: str
+        module: DealReasonerModule,
+        dataset: Optional[List[dspy.Example]]
     ) -> float:
-        """
-        Evaluate improvement between baseline and optimized prompts.
-        
-        Returns:
-            Improvement score from 0.0 to 1.0
-        """
-        # TODO: Implement real evaluation using test dataset
-        # For now, return synthetic improvement for demonstration
-        # In production, this would run A/B tests on real deal data
-        
-        # Placeholder: assume small improvement for demonstration
-        return 0.12  # 12% improvement over baseline
+        """Run the given module across a dataset and average composite scores."""
+        examples = dataset or self._get_training_dataset()
+        if not examples:
+            return 0.0
+        scores: List[float] = []
+        for example in examples:
+            try:
+                prediction = module(
+                    query=example.query,
+                    candidate_deals=example.candidate_deals
+                )
+                scores.append(self.metric(example, prediction))
+            except Exception as exc:
+                self.logger.warning("Module evaluation failed: %s", exc)
+        return sum(scores) / len(scores) if scores else 0.0
     
     def save_optimized_prompt(
         self,
@@ -246,27 +299,40 @@ class DSPyOptimizer:
         # Determine output path
         optimized_version = optimization_result["optimized_version"]
         if not output_path:
-            output_path = f"prompts/deal_reasoner/{optimized_version}_optimized.txt"
+            output_path = f"prompts/deal_reasoner/{optimized_version}_optimized.json"
         
-        # Create output directory
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Save optimized prompt
-        with open(output_path, 'w') as f:
-            f.write(f"Generated by DSPy MIPRO on {optimization_result['optimization_time']}\n")
-            f.write(f"Improvement Score: {optimization_result['improvement_score']:.3f}\n")
-            f.write(f"Baseline Version: {optimization_result['baseline_version']}\n")
-            f.write(f"Candidate Prompts Evaluated: {optimization_result['candidate_prompts_evaluated']}\n")
-            f.write(f"Total Evaluations: {optimization_result['total_evaluations']}\n")
-            f.write("=" * 50 + "\n\n")
-            f.write("SYSTEM PROMPT:\n")
-            f.write(optimization_result["system_prompt"])
-            f.write("\n\n")
-            f.write("USER PROMPT:\n")
-            f.write(optimization_result["user_prompt"])
-        
-        self.logger.info(f"Optimized prompt saved to: {output_path}")
-        return output_path
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        module_path = optimization_result.get("module_path")
+        optimized_program = optimization_result.get("optimized_program")
+        if optimized_program and not module_path:
+            module_path = output_path.with_name(f"{output_path.stem}_module.json")
+            try:
+                optimized_program.save(module_path)
+                optimization_result["module_path"] = str(module_path)
+            except Exception as exc:
+                self.logger.warning("Unable to save DSPy module state: %s", exc)
+                module_path = None
+
+        payload = {
+            "content": optimization_result["user_prompt"],
+            "metadata": {
+                "version": optimized_version,
+                "name": "deal_reasoner",
+                "description": "DSPy optimized reasoning prompt",
+                "prompt_type": "optimized",
+                "system_prompt": optimization_result["system_prompt"],
+                "model": settings.DSPY_MODEL,
+                "created_date": optimization_result["optimization_time"],
+                "performance_metrics": optimization_result.get("performance_metrics"),
+                "module_path": str(module_path) if module_path else None,
+            },
+        }
+
+        output_path.write_text(json.dumps(payload, indent=2))
+        self.logger.info("Optimized prompt saved to %s", output_path)
+        return str(output_path)
     
     def get_optimization_history(self) -> List[Dict[str, Any]]:
         """Get history of optimization attempts."""
@@ -312,3 +378,25 @@ def set_dspy_optimizer(optimizer: DSPyOptimizer) -> None:
     """Set the global DSPy optimizer instance."""
     global _dspy_optimizer
     _dspy_optimizer = optimizer
+
+
+def optimize_deal_reasoner(
+    baseline_version: str = "v1",
+    num_candidate_prompts: int = 10,
+    max_evaluations: int = 100,
+    output_path: Optional[str] = None,
+    min_improvement: float = 0.05,
+) -> Dict[str, Any]:
+    """
+    Convenience wrapper to run DSPy optimization and persist results.
+    """
+    optimizer = DSPyOptimizer()
+    result = optimizer.optimize_deal_reasoner_prompt(
+        baseline_prompt_version=baseline_version,
+        num_candidate_prompts=num_candidate_prompts,
+        max_evaluations=max_evaluations,
+        min_improvement=min_improvement,
+    )
+    if result.get("meets_threshold"):
+        optimizer.save_optimized_prompt(result, output_path)
+    return result

@@ -2,6 +2,7 @@
 # ABOUTME: Creates diverse test scenarios for comprehensive prompt evaluation.
 
 import logging
+import math
 import random
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from dealgraph.data.ingest import load_all
 @dataclass
 class DealTestCase:
     """Individual test case for benchmarking."""
+    
+    __test__ = False
     
     case_id: str
     query: str
@@ -38,6 +41,8 @@ class TestCaseGenerator:
     Creates diverse test scenarios based on deal categories, difficulty levels,
     and realistic investment scenarios.
     """
+    
+    __test__ = False
     
     def __init__(self, data_source: Optional[str] = None):
         """
@@ -125,6 +130,9 @@ class TestCaseGenerator:
         Returns:
             List of DealTestCase objects
         """
+        if num_cases <= 0:
+            return []
+        
         if categories is None:
             categories = list(self.query_templates.keys())
         
@@ -134,7 +142,7 @@ class TestCaseGenerator:
         self.logger.info(f"Generating {num_cases} test cases across {len(categories)} categories")
         
         test_cases = []
-        cases_per_category = num_cases // len(categories)
+        cases_per_category = max(1, math.ceil(num_cases / len(categories)))
         
         for category in categories:
             category_cases = self._generate_category_cases(
@@ -256,8 +264,8 @@ class TestCaseGenerator:
     
     def _get_deals_by_category(self, category: str) -> List[Deal]:
         """Get deals filtered by category."""
-        if not self.dataset:
-            return []
+        if not self.dataset or not getattr(self.dataset, "deals", None):
+            return self._generate_synthetic_deals_by_category(category)
         
         # Filter deals by sector/region matching the category
         # This is a simplified approach - in practice, you'd have more sophisticated filtering
@@ -267,7 +275,24 @@ class TestCaseGenerator:
             if self._deal_matches_category(deal, category):
                 category_deals.append(deal)
         
-        return category_deals
+        return category_deals or self._generate_synthetic_deals_by_category(category)
+
+    def _generate_synthetic_deals_by_category(self, category: str) -> List[Deal]:
+        """Create synthetic deals when real data isn't available."""
+        deals: List[Deal] = []
+        for idx in range(5):
+            deals.append(
+                Deal(
+                    id=f"synthetic_{category}_{idx}",
+                    name=f"{category.title()} Deal {idx}",
+                    sector_id=category,
+                    region_id="us",
+                    is_platform=idx % 2 == 0,
+                    status="current",
+                    description=f"Synthetic {category} description {idx}",
+                )
+            )
+        return deals
     
     def _deal_matches_category(self, deal: Deal, category: str) -> bool:
         """Check if a deal matches the given category."""
@@ -409,7 +434,7 @@ class TestCaseGenerator:
                 category="manufacturing",
                 difficulty="hard"
             )
-            edge_cases.append(low_similarity_case)
+            edge_cases.append(low_sim_case)
         
         return edge_cases
     
